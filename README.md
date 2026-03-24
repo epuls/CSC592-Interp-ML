@@ -1,6 +1,22 @@
 # Cosine Similarity is *Almost* All You Need (for Prototypical-Part Models)
 
-This repository contains the code and experiments for the workshop paper **Cosine Similarity is *Almost* All You Need (for Prototypical-Part Models)**, CVPR xAI4CV Workshop, 2025.
+This repository contains the code and experiments for the paper [**Cosine Similarity is *Almost* All You Need (for Prototypical-Part Models)**](https://openaccess.thecvf.com/content/WACV2026/papers/Moffett_Cosine_Similarity_is_Almost_All_You_Need_for_Prototypical-Part_Models_WACV_2026_paper.pdf), presented at WACV 2026.
+
+A workshop version of this paper was presented at CVPR's xai4cv 2025.
+
+## Citation
+
+Please cite the original paper:
+
+```{bibtex}
+@inproceedings{moffett2026cosine,
+  title={Cosine Similarity is Almost All You Need (for Prototypical-Part Models)},
+  author={Moffett, Luke and Willard, Frank and Machado, Maximillian and Mokel, Emmanuel and Donnelly, Jon and Guo, Zhicheng and Costarino, Adam and Yang, Julia and Kim, Giyoung and Barnett, Alina Jade and others},
+  booktitle={Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision},
+  pages={1586--1596},
+  year={2026}
+}
+```
 
 ## Repository Structure
 
@@ -188,24 +204,6 @@ The checkpoints are still usable as-is, but this causes critical model weights t
 
 The name generation entropy lead to naming collisions when running thousands of training runs.
 The entropy was increased midway through the experiments, but handling previous runs required cross-checking results in `analysis/ExportResults.ipynb`.
-
-## Non-Archival Workshop Paper
-
-This work was presented as a non-archival workshop paper.
-If you use this code or build upon these ideas, please consider citing the arXiv version of the ProtoPNeXt paper for the underlying ProtoPNeXt library [7].
-
-## Contributors
-
-- Frank Willard
-- Maximilian Machado
-- Emanuel Mokel
-- Adam Costarino
-- Jon Donnelly
-- Zhicheng Guo
-- Dennis Tang
-- Julia Yang
-- Giyoung Kim
-- Alina Jade Barnett
 
 ## References
 
