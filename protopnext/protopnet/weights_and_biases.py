@@ -82,6 +82,7 @@ def step_metrics(run, step):
             "eval/prototype_consistency",
             "eval/prototype_score",
             "eval/acc_proto_score",
+            "eval/prototype_quality",
         ]
     elif "eval/accuracy" in history_sample.columns:
         cols = ["eval/accuracy"]
