@@ -11,7 +11,7 @@ from torchmetrics.classification import (
     MulticlassROC,
 )
 
-from ..metrics import PartConsistencyScore, PartStabilityScore, add_gaussian_noise
+from ..metrics import PartConsistencyScore, PartStabilityScore, PartQualityScore, add_gaussian_noise
 from ..prototypical_part_model import ProtoPNet
 from ..utilities.trainer_utilities import predicated_extend
 
@@ -160,6 +160,16 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                     TrainingMetric(
                         name="prototype_consistency",
                         metric=PartConsistencyScore(
+                            num_classes=num_classes,
+                            part_num=part_num,
+                            proto_per_class=proto_per_class,
+                            img_sz=img_size,
+                            half_size=half_size,
+                        ),
+                    ),
+                    TrainingMetric(
+                        name="prototype_quality",
+                        metric=PartQualityScore(
                             num_classes=num_classes,
                             part_num=part_num,
                             proto_per_class=proto_per_class,

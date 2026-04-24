@@ -358,3 +358,61 @@ class PartStabilityScore(InterpMetrics):
         stability_score = all_proto_stability.mean()
 
         return stability_score
+
+# How many prototypes contain a cub point of interest (object part) in the corresponding region, and how many prototypes do not correspond to any object part in the part annotations (non-consistent prototypes).
+class PartQualityScore(InterpMetrics):
+    def __init__(
+        self,
+        num_classes,
+        part_num,
+        proto_per_class,
+        img_sz=224,
+        half_size=36,
+        dist_sync_on_step=False,
+        uncropped=True,
+    ):
+        super().__init__(
+            num_classes=num_classes,
+            part_num=part_num,
+            proto_per_class=proto_per_class,
+            img_sz=img_sz,
+            half_size=half_size,
+            dist_sync_on_step=dist_sync_on_step,
+            uncropped=uncropped,
+        )
+        self.add_state("all_proto_acts", default=[], dist_reduce_fx="cat")
+        self.add_state("all_targets", default=[], dist_reduce_fx="cat")
+        self.add_state("all_sample_parts_centroids", default=[], dist_reduce_fx="cat")
+        self.add_state("all_sample_bounding_box", default=[], dist_reduce_fx="cat")
+
+    def update(self, proto_acts, targets, sample_parts_centroids, sample_bounding_box):
+        batch_proto_acts, batch_targets = self.filter_proto_acts(proto_acts, targets)
+        self.all_proto_acts.append(batch_proto_acts)
+        self.all_targets.append(batch_targets)
+        self.all_sample_parts_centroids.extend(sample_parts_centroids)
+        self.all_sample_bounding_box.append(sample_bounding_box)
+
+    def compute(self):
+        all_proto_to_part, all_proto_part_mask = self.proto2part_and_masks(
+            self.all_proto_acts,
+            self.all_targets,
+            self.all_sample_parts_centroids,
+            self.all_sample_bounding_box,
+        )
+        all_proto_quality = []
+
+        for proto_idx in range(len(all_proto_to_part)):
+            proto_to_part = all_proto_to_part[proto_idx]
+
+            proto_part_mask = all_proto_part_mask[proto_idx]
+            assert (
+                (1.0 - proto_part_mask) * proto_to_part
+            ).sum() == 0
+
+            has_any_annotated_point = proto_to_part.sum() > 0
+            all_proto_quality.append(has_any_annotated_point.float())
+
+        all_proto_quality = torch.stack(all_proto_quality).float()
+        quality_score = all_proto_quality.mean()
+
+        return quality_score
