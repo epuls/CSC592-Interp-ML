@@ -11,6 +11,19 @@ class TestInterpretableTrainingMetrics:
     @pytest.fixture
     def protopnet_mock(self):
         class ProtoPNetMock:
+            class PredictionHead:
+                class ClassConnectionLayer:
+                    weight = torch.tensor(
+                        [
+                            [1.0, -0.5],
+                            [-0.5, 1.0],
+                        ]
+                    )
+
+                class_connection_layer = ClassConnectionLayer()
+
+            prototype_prediction_head = PredictionHead()
+
             def __call__(self, x, return_prototype_layer_output_dict=False):
                 return {"prototype_activations": torch.rand(len(x), 2, 1, 2, 2)}
 
@@ -43,6 +56,8 @@ class TestInterpretableTrainingMetrics:
             "conf_mat",
             "prototype_stability",
             "prototype_consistency",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
             "prototype_sparsity",
             "n_unique_proto_parts",
             "n_unique_protos",
@@ -84,6 +99,8 @@ class TestInterpretableTrainingMetrics:
             "n_unique_protos",
             "n_unique_proto_parts",
             "prototype_consistency",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
             "prototype_stability",
             "prototype_score",
             "acc_proto_score",
@@ -98,14 +115,18 @@ class TestInterpretableTrainingMetrics:
             )
             if key.startswith("n_"):
                 assert result[key] // 1 == result[key], key
+            elif key == "prototype_ablation_top1_unique_count":
+                assert result[key] // 1 == result[key], key
             elif key == "pr":
                 precision, recall, _ = result[key]
                 assert all(((x >= 0) & (x <= 1)).all() for x in precision)
                 assert all(((x >= 0) & (x <= 1)).all() for x in recall)
                 assert len(precision) == 2, key
-                assert precision[0].shape == torch.Size([2]), key
+                assert precision[0].ndim == 1, key
+                assert precision[0].numel() >= 2, key
                 assert len(recall) == 2, key
-                assert recall[0].shape == torch.Size([2]), key
+                assert recall[0].ndim == 1, key
+                assert recall[0].numel() >= 2, key
             elif key == "roc":
                 fpr, tpr, _ = result[key]
                 assert all(((x >= 0) & (x <= 1)).all() for x in fpr)

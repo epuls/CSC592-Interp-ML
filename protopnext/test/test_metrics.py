@@ -13,6 +13,8 @@ from protopnet.embedding import AddonLayers
 from protopnet.metrics import (
     PartConsistencyScore,
     PartStabilityScore,
+    PrototypeAblationScore,
+    PrototypeAblationUniqueCount,
     add_gaussian_noise,
 )
 from protopnet.models.vanilla_protopnet import VanillaProtoPNet
@@ -102,6 +104,9 @@ def test_interp_metrics(loaded_ppnet, seed):
         uncropped=True,
     )
 
+    pas = PrototypeAblationScore()
+    pau = PrototypeAblationUniqueCount()
+
     intersperse_rsts_pcs = []
     intersperse_rsts_pss = []
     intersperse_rsts_pss_stable = []
@@ -116,15 +121,22 @@ def test_interp_metrics(loaded_ppnet, seed):
             sample_parts_centroids = packet["sample_parts_centroids"]
             sample_bounding_box = packet["sample_bounding_box"]
 
-            proto_acts = loaded_ppnet(data, return_prototype_layer_output_dict=True)[
-                "prototype_activations"
-            ]
+            model_outputs = loaded_ppnet(
+                data, return_prototype_layer_output_dict=True
+            )
+            proto_acts = model_outputs["prototype_activations"]
+            logits = model_outputs["logits"]
+            class_connection_weights = (
+                loaded_ppnet.prototype_prediction_head.class_connection_layer.weight
+            )
             proto_acts_noisy = loaded_ppnet(
                 add_gaussian_noise(data, generator),
                 return_prototype_layer_output_dict=True,
             )["prototype_activations"]
 
             pcs.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
+            pas.update(proto_acts, logits, class_connection_weights)
+            pau.update(proto_acts, logits, class_connection_weights)
             pss.update(
                 proto_acts,
                 proto_acts_noisy,
@@ -146,10 +158,14 @@ def test_interp_metrics(loaded_ppnet, seed):
 
     pss_score = pss.compute()
     pcs_score = pcs.compute()
+    pas_score = pas.compute()
+    pau_score = pau.compute()
     pss_stable_score = pss_stable.compute()
 
     assert pcs_score == 0.0, "pcs_score test failed"
     assert pss_stable_score == 1.0, "pss_stable_score test failed"
+    assert pas_score >= 0.0 and pas_score <= 1.0, "pas_score test failed"
+    assert pau_score >= 0, "pau_score test failed"
 
     assert intersperse_rsts_pcs[-1] == 0.0, "intersperse_rsts_pcs test failed"
     assert (
@@ -362,3 +378,56 @@ def test_pcs_perfect_score(
         score = pcs.compute()
 
     assert score == 1.0
+
+
+def test_prototype_ablation_score_known_drop():
+    weights = torch.tensor(
+        [
+            [1.0, 0.5, -0.2],
+            [-0.3, 0.8, 1.2],
+        ]
+    )
+    proto_acts = torch.tensor([[[[0.9]], [[0.4]], [[0.2]]]])
+    prototype_scores = proto_acts.view(1, 3)
+    logits = prototype_scores @ weights.T
+
+    metric = PrototypeAblationScore()
+    metric.update(
+        proto_acts=proto_acts,
+        logits=logits,
+        class_connection_weights=weights,
+    )
+
+    ablated_scores = torch.tensor([[0.0, 0.4, 0.2]])
+    ablated_logits = ablated_scores @ weights.T
+    original_confidence = torch.softmax(logits, dim=1)[0, 0]
+    ablated_confidence = torch.softmax(ablated_logits, dim=1)[0, 0]
+    expected_drop = original_confidence - ablated_confidence
+
+    assert torch.isclose(metric.compute(), expected_drop)
+
+
+def test_prototype_ablation_unique_count():
+    weights = torch.tensor(
+        [
+            [1.0, 0.1, 0.1],
+            [0.1, 1.0, 0.1],
+        ]
+    )
+    proto_acts = torch.tensor(
+        [
+            [[[0.9]], [[0.2]], [[0.1]]],
+            [[[0.1]], [[0.8]], [[0.2]]],
+        ]
+    )
+    prototype_scores = proto_acts.view(2, 3)
+    logits = prototype_scores @ weights.T
+
+    metric = PrototypeAblationUniqueCount()
+    metric.update(
+        proto_acts=proto_acts,
+        logits=logits,
+        class_connection_weights=weights,
+    )
+
+    assert metric.compute() == 2

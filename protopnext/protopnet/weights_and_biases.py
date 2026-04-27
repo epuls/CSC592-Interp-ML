@@ -80,6 +80,8 @@ def step_metrics(run, step):
             "eval/prototype_sparsity",
             "eval/prototype_stability",
             "eval/prototype_consistency",
+            "eval/prototype_ablation_score",
+            "eval/prototype_ablation_top1_unique_count",
             "eval/prototype_score",
             "eval/acc_proto_score",
         ]

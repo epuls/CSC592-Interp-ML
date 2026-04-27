@@ -11,7 +11,13 @@ from torchmetrics.classification import (
     MulticlassROC,
 )
 
-from ..metrics import PartConsistencyScore, PartStabilityScore, add_gaussian_noise
+from ..metrics import (
+    PartConsistencyScore,
+    PartStabilityScore,
+    PrototypeAblationScore,
+    PrototypeAblationUniqueCount,
+    add_gaussian_noise,
+)
 from ..prototypical_part_model import ProtoPNet
 from ..utilities.trainer_utilities import predicated_extend
 
@@ -168,6 +174,14 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                         ),
                     ),
                     TrainingMetric(
+                        name="prototype_ablation_score",
+                        metric=PrototypeAblationScore(),
+                    ),
+                    TrainingMetric(
+                        name="prototype_ablation_top1_unique_count",
+                        metric=PrototypeAblationUniqueCount(),
+                    ),
+                    TrainingMetric(
                         name="prototype_sparsity",
                         metric=torchmetrics.MeanMetric(),
                     ),
@@ -249,6 +263,9 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             forward_args=forward_args,
             forward_outputs=forward_outputs,
         )
+
+        if not self.acc_only:
+            self.update_prototype_ablation(forward_outputs=forward_outputs)
 
         if not self.acc_only and "sample_bounding_box" in forward_args:
             self.update_stability(
@@ -339,6 +356,27 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             sample_parts_centroids=forward_args["sample_parts_centroids"],
             sample_bounding_box=forward_args["sample_bounding_box"],
         )
+
+    def update_prototype_ablation(self, forward_outputs: dict):
+        prediction_head = self.protopnet.prototype_prediction_head
+        if not hasattr(prediction_head, "class_connection_layer"):
+            return
+
+        if "prototype_activations" not in forward_outputs:
+            return
+
+        class_connection_weights = (
+            prediction_head.class_connection_layer.weight.detach()
+        )
+        for metric_name in [
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
+        ]:
+            self.metrics[metric_name].metric.update(
+                proto_acts=forward_outputs["prototype_activations"],
+                logits=forward_outputs["logits"],
+                class_connection_weights=class_connection_weights,
+            )
 
     def update_prototype_sparsity(self):
         """

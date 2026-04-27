@@ -38,8 +38,141 @@ def add_gaussian_noise(norm_img, generator, std=0.2, eps=0.25):
     perturbed_img = norm_img + noise
     return perturbed_img
 
+# It calculates the drop in confidence for a batch of images when the most important prototypes are disabled.
+def prototype_ablation_drops(
+    proto_acts,
+    logits,
+    class_connection_weights,
+    ablation_top_k=1,
+    activation_top_k=1,
+):
+    #Calculate a single score for each prototype
+    #Flatten prototype activation maps into one score per prototype
+    #For each image, get one activation score per prototype
+    _activations = proto_acts.view(proto_acts.shape[0], proto_acts.shape[1], -1)
+    activation_top_k = min(activation_top_k, _activations.shape[-1])
+    topk_activations, _ = torch.topk(_activations, activation_top_k, dim=-1)
+    prototype_scores = torch.mean(topk_activations, dim=-1)
+    
+    #Record the original prediction and confidence
+    #Records which class did the model predict, and how confident was it?
+    predicted_classes = torch.argmax(logits, dim=1)
+    original_confidences = torch.softmax(logits, dim=1)[
+        torch.arange(logits.shape[0], device=logits.device), predicted_classes
+    ]
+    # Compute each prototype’s contribution to the predicted class
+    # Prototype contribution = activation * class weight
+    predicted_class_weights = class_connection_weights[predicted_classes]
+    contributions = prototype_scores * predicted_class_weights
+
+    # Find the most important prototypes
+    ablation_top_k = min(ablation_top_k, contributions.shape[-1])
+    top_contributions, top_prototype_indices = torch.topk(
+        contributions, ablation_top_k, dim=-1
+    )
+    # "Ablate" the top prototypes
+    ablated_prototype_scores = prototype_scores.clone()
+    valid_ablation_mask = top_contributions > 0
+    batch_indices = (
+        torch.arange(proto_acts.shape[0], device=proto_acts.device)
+        .unsqueeze(1)
+        .expand_as(top_prototype_indices)
+    )
+    # Remove that prototype activation
+    ablated_prototype_scores[
+        batch_indices[valid_ablation_mask],
+        top_prototype_indices[valid_ablation_mask],
+    ] = 0
+    # Recompute the prediction without those prototypes
+    ablated_logits = ablated_prototype_scores @ class_connection_weights.T
+    ablated_confidences = torch.softmax(ablated_logits, dim=1)[
+        torch.arange(logits.shape[0], device=logits.device), predicted_classes
+    ]
+    #Calculate the final drop
+    #It subtracts the new confidence from the original confidence.
+    confidence_drops = original_confidences - ablated_confidences
+    selected_prototypes = top_prototype_indices[valid_ablation_mask]
+
+    return confidence_drops, selected_prototypes
+
 
 # ============ METRICS ============
+class PrototypeAblationScore(Metric):
+    """
+    Measures prediction faithfulness by removing the top supporting prototype
+    for each image and averaging the resulting predicted-class confidence drop.
+    """
+
+    def __init__(
+        self,
+        ablation_top_k=1,
+        activation_top_k=1,
+        dist_sync_on_step=False,
+    ):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.ablation_top_k = ablation_top_k
+        self.activation_top_k = activation_top_k
+        self.add_state("sum_drop", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, proto_acts, logits, class_connection_weights):
+        confidence_drops, _ = prototype_ablation_drops(
+            proto_acts=proto_acts,
+            logits=logits,
+            class_connection_weights=class_connection_weights,
+            ablation_top_k=self.ablation_top_k,
+            activation_top_k=self.activation_top_k,
+        )
+        self.sum_drop += confidence_drops.sum()
+        self.total += confidence_drops.numel()
+
+    def compute(self):
+        if self.total == 0:
+            return self.sum_drop
+        return self.sum_drop / self.total
+
+
+class PrototypeAblationUniqueCount(Metric):
+    """
+    Counts how many distinct prototype IDs were selected as top supporting
+    prototypes across the evaluated images.
+    """
+
+    def __init__(
+        self,
+        ablation_top_k=1,
+        activation_top_k=1,
+        dist_sync_on_step=False,
+    ):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.ablation_top_k = ablation_top_k
+        self.activation_top_k = activation_top_k
+        self.add_state("selected_prototypes", default=[], dist_reduce_fx="cat")
+
+    def update(self, proto_acts, logits, class_connection_weights):
+        _, selected_prototypes = prototype_ablation_drops(
+            proto_acts=proto_acts,
+            logits=logits,
+            class_connection_weights=class_connection_weights,
+            ablation_top_k=self.ablation_top_k,
+            activation_top_k=self.activation_top_k,
+        )
+        self.selected_prototypes.append(selected_prototypes)
+
+    def compute(self):
+        if len(self.selected_prototypes) == 0:
+            return torch.tensor(0, device=self.device)
+
+        selected_prototypes = torch.cat(self.selected_prototypes)
+        if selected_prototypes.numel() == 0:
+            return torch.tensor(0, device=selected_prototypes.device)
+
+        return torch.tensor(
+            torch.unique(selected_prototypes).numel(),
+            device=selected_prototypes.device,
+        )
+
+
 class InterpMetrics(Metric):
     def __init__(
         self,

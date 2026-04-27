@@ -78,7 +78,11 @@ def train(
 
     train_logger = WeightsAndBiasesTrainLogger(
         device=setup["device"],
-        calculate_best_for=["acc_proto_score"],
+        calculate_best_for=[
+            "acc_proto_score",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
+        ],
     )
 
     protopnet_loss = loss_for_coefficients(
@@ -86,7 +90,7 @@ def train(
         class_specific_cluster=True,
     ).to(setup["device"])
 
-    if dataset.lower() == "cub200":
+    if dataset.lower() in ["cub200", "cub200_cropped"]:
         metric_conf = dict(
             part_num=15,
             img_size=224,
