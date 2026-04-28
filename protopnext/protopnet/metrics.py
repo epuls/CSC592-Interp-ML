@@ -38,7 +38,6 @@ def add_gaussian_noise(norm_img, generator, std=0.2, eps=0.25):
     perturbed_img = norm_img + noise
     return perturbed_img
 
-# It calculates the drop in confidence for a batch of images when the most important prototypes are disabled.
 def prototype_ablation_drops(
     proto_acts,
     logits,
@@ -46,9 +45,20 @@ def prototype_ablation_drops(
     ablation_top_k=1,
     activation_top_k=1,
 ):
-    #Calculate a single score for each prototype
-    #Flatten prototype activation maps into one score per prototype
-    #For each image, get one activation score per prototype
+    """
+    Calculate predicted-class confidence drops after ablating top prototypes.
+
+    Args:
+        proto_acts: Prototype activation maps with shape
+            ``[batch_size, num_prototypes, height, width]``.
+        logits: Unnormalized class scores before ablation.
+        class_connection_weights: Final-layer weights with shape
+            ``[num_classes, num_prototypes]``.
+        ablation_top_k: Number of top supporting prototypes to remove.
+        activation_top_k: Number of activation-map peaks to average into each
+            prototype score.
+    """
+    # Flatten prototype activation maps into one score per prototype.
     _activations = proto_acts.view(proto_acts.shape[0], proto_acts.shape[1], -1)
     activation_top_k = min(activation_top_k, _activations.shape[-1])
     topk_activations, _ = torch.topk(_activations, activation_top_k, dim=-1)

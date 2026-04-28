@@ -407,6 +407,27 @@ def test_prototype_ablation_score_known_drop():
     assert torch.isclose(metric.compute(), expected_drop)
 
 
+def test_prototype_ablation_score_perfect_score():
+    weights = torch.tensor(
+        [
+            [100.0, -100.0],
+            [-100.0, 100.0],
+        ]
+    )
+    proto_acts = torch.tensor([[[[1.0]], [[0.95]]]])
+    prototype_scores = proto_acts.view(1, 2)
+    logits = prototype_scores @ weights.T
+
+    metric = PrototypeAblationScore()
+    metric.update(
+        proto_acts=proto_acts,
+        logits=logits,
+        class_connection_weights=weights,
+    )
+
+    assert metric.compute() > 0.99
+
+
 def test_prototype_ablation_unique_count():
     weights = torch.tensor(
         [

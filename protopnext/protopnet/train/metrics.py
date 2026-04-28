@@ -106,6 +106,9 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             device (Union[str, torch.device], optional): The device to run the metrics on. Defaults to "cpu".
         """
 
+        prediction_head = protopnet.prototype_prediction_head
+        activation_top_k = getattr(prediction_head, "k_for_topk", 1)
+
         super().__init__(
             metrics=predicated_extend(
                 not acc_only,
@@ -175,11 +178,15 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                     ),
                     TrainingMetric(
                         name="prototype_ablation_score",
-                        metric=PrototypeAblationScore(),
+                        metric=PrototypeAblationScore(
+                            activation_top_k=activation_top_k
+                        ),
                     ),
                     TrainingMetric(
                         name="prototype_ablation_top1_unique_count",
-                        metric=PrototypeAblationUniqueCount(),
+                        metric=PrototypeAblationUniqueCount(
+                            activation_top_k=activation_top_k
+                        ),
                     ),
                     TrainingMetric(
                         name="prototype_sparsity",
@@ -373,8 +380,8 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             "prototype_ablation_top1_unique_count",
         ]:
             self.metrics[metric_name].metric.update(
-                proto_acts=forward_outputs["prototype_activations"],
-                logits=forward_outputs["logits"],
+                proto_acts=forward_outputs["prototype_activations"].detach(),
+                logits=forward_outputs["logits"].detach(),
                 class_connection_weights=class_connection_weights,
             )
 
