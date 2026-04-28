@@ -214,6 +214,43 @@ class InterpretableTrainingMetrics(TrainingMetrics):
         # FIXME - this is hack
         self.acc_only = acc_only
 
+    def _reset_epoch_metrics(self):
+        for metric_name in [
+            "accuracy",
+            "pr",
+            "roc",
+            "weighted_auroc",
+            "class_aurocs",
+            "conf_mat",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
+        ]:
+            self.metrics[metric_name].metric.reset()
+
+    def _compute_epoch_metrics(self) -> dict:
+        result = {
+            "accuracy": self.metrics["accuracy"].metric.compute(),
+            "pr": self.metrics["pr"].metric.compute(),
+            "roc": self.metrics["roc"].metric.compute(),
+            "weighted_auroc": self.metrics["weighted_auroc"].metric.compute(),
+            "class_aurocs": self.metrics["class_aurocs"].metric.compute(),
+            "conf_mat": self.metrics["conf_mat"].metric.compute(),
+        }
+
+        if not self.acc_only:
+            result.update(
+                {
+                    "prototype_ablation_score": self.metrics[
+                        "prototype_ablation_score"
+                    ].metric.compute(),
+                    "prototype_ablation_top1_unique_count": self.metrics[
+                        "prototype_ablation_top1_unique_count"
+                    ].metric.compute(),
+                }
+            )
+
+        return result
+
     def metric_names(self):
         raw_metric_names = super().metric_names()
         if self.acc_only:
@@ -230,12 +267,7 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             self.reset()
             self.prototype_metrics_cached = False
         else:
-            self.metrics["accuracy"].metric.reset()
-            self.metrics["pr"].metric.reset()
-            self.metrics["roc"].metric.reset()
-            self.metrics["weighted_auroc"].metric.reset()
-            self.metrics["class_aurocs"].metric.reset()
-            self.metrics["conf_mat"].metric.reset()
+            self._reset_epoch_metrics()
 
         if self.protopnet.prototypes_embedded():
             self.prototypes_embedded_any = True
@@ -406,26 +438,12 @@ class InterpretableTrainingMetrics(TrainingMetrics):
         Compute all the metrics and return the raw values in a dictionary.
         """
         if self.acc_only or not self.prototypes_embedded_any:
-            return {
-                "accuracy": self.metrics["accuracy"].metric.compute(),
-                "pr": self.metrics["pr"].metric.compute(),
-                "roc": self.metrics["roc"].metric.compute(),
-                "weighted_auroc": self.metrics["weighted_auroc"].metric.compute(),
-                "class_aurocs": self.metrics["class_aurocs"].metric.compute(),
-                "conf_mat": self.metrics["conf_mat"].metric.compute(),
-            }
+            return self._compute_epoch_metrics()
 
         if self.prototype_metrics_cached:
             log.debug("returning cached metrics")
             result_dict = self.cached_results
-            result_dict["accuracy"] = self.metrics["accuracy"].metric.compute()
-            result_dict["pr"] = self.metrics["pr"].metric.compute()
-            result_dict["roc"] = self.metrics["roc"].metric.compute()
-            result_dict["weighted_auroc"] = self.metrics[
-                "weighted_auroc"
-            ].metric.compute()
-            result_dict["class_aurocs"] = self.metrics["class_aurocs"].metric.compute()
-            result_dict["conf_mat"] = self.metrics["conf_mat"].metric.compute()
+            result_dict.update(self._compute_epoch_metrics())
 
         else:
             log.debug("calculating new metrics")

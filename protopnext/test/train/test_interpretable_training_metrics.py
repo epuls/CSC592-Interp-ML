@@ -199,3 +199,22 @@ class TestInterpretableTrainingMetrics:
             del result[field]
 
         assert result_2 == result, "other results should be cached"
+
+    def test_compute_dict_before_project_includes_ablation(self, training_metrics):
+        forward_args = {
+            "img": torch.rand(2, 3, 224, 224),
+            "target": torch.tensor([1, 0]),
+        }
+
+        forward_output = {
+            "logits": torch.tensor([[0.1, 0.2], [0.4, 0.3]]),
+            "prototype_activations": torch.rand(2, 2, 1, 2, 2),
+        }
+
+        training_metrics.update_all(forward_args, forward_output, phase="warm")
+        result = training_metrics.compute_dict()
+
+        assert "prototype_ablation_score" in result
+        assert "prototype_ablation_top1_unique_count" in result
+        assert "prototype_score" not in result
+        assert "acc_proto_score" not in result
