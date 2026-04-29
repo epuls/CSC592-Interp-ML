@@ -13,6 +13,7 @@ from torchmetrics.classification import (
 
 from ..metrics import (
     PartConsistencyScore,
+    PartQualityScore,
     PartStabilityScore,
     PrototypeAblationScore,
     PrototypeAblationUniqueCount,
@@ -189,6 +190,16 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                         ),
                     ),
                     TrainingMetric(
+                        name="prototype_quality",
+                        metric=PartQualityScore(
+                            num_classes=num_classes,
+                            part_num=part_num,
+                            proto_per_class=proto_per_class,
+                            img_sz=img_size,
+                            half_size=half_size,
+                        ),
+                    ),
+                    TrainingMetric(
                         name="prototype_sparsity",
                         metric=torchmetrics.MeanMetric(),
                     ),
@@ -315,6 +326,10 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                 forward_args=forward_args,
                 forward_outputs=forward_outputs,
             )
+            self.update_prototype_quality(
+                forward_args=forward_args,
+                forward_outputs=forward_outputs,
+            )
             self.update_prototype_sparsity()
 
     def update_accuracy(self, forward_args: dict, forward_outputs: dict):
@@ -416,6 +431,19 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                 logits=forward_outputs["logits"].detach(),
                 class_connection_weights=class_connection_weights,
             )
+
+    def update_prototype_quality(self, forward_args: dict, forward_outputs: dict):
+        """
+        Update the prototype quality metric.
+        """
+        quality = self.metrics["prototype_quality"].metric
+
+        quality.update(
+            proto_acts=forward_outputs["prototype_activations"],
+            targets=forward_args["target"],
+            sample_parts_centroids=forward_args["sample_parts_centroids"],
+            sample_bounding_box=forward_args["sample_bounding_box"],
+        )
 
     def update_prototype_sparsity(self):
         """
