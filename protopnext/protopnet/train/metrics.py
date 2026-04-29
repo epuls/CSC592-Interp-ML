@@ -17,6 +17,7 @@ from ..metrics import (
     PartStabilityScore,
     PrototypeAblationScore,
     PrototypeAblationUniqueCount,
+    PartSpecificityScore,
     add_gaussian_noise,
 )
 from ..prototypical_part_model import ProtoPNet
@@ -200,6 +201,14 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                         ),
                     ),
                     TrainingMetric(
+                        name="prototype_specificity",
+                        metric=PartSpecificityScore(
+                            num_classes=num_classes,
+                            part_num=part_num,
+                            proto_per_class=proto_per_class,
+                        ),
+                    ),
+                    TrainingMetric(
                         name="prototype_sparsity",
                         metric=torchmetrics.MeanMetric(),
                     ),
@@ -330,6 +339,10 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                 forward_args=forward_args,
                 forward_outputs=forward_outputs,
             )
+            self.update_specificity(
+                forward_args=forward_args,
+                forward_outputs=forward_outputs,
+            )
             self.update_prototype_sparsity()
 
     def update_accuracy(self, forward_args: dict, forward_outputs: dict):
@@ -439,6 +452,19 @@ class InterpretableTrainingMetrics(TrainingMetrics):
         quality = self.metrics["prototype_quality"].metric
 
         quality.update(
+            proto_acts=forward_outputs["prototype_activations"],
+            targets=forward_args["target"],
+            sample_parts_centroids=forward_args["sample_parts_centroids"],
+            sample_bounding_box=forward_args["sample_bounding_box"],
+        )
+
+    def update_specificity(self, forward_args: dict, forward_outputs: dict):
+        """
+        Update the specificity metric.
+        """
+        specificity = self.metrics["prototype_specificity"].metric
+    
+        specificity.update(
             proto_acts=forward_outputs["prototype_activations"],
             targets=forward_args["target"],
             sample_parts_centroids=forward_args["sample_parts_centroids"],

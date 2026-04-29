@@ -559,3 +559,79 @@ class PartQualityScore(InterpMetrics):
         quality_score = all_proto_quality.mean()
 
         return quality_score
+    
+
+class PartSpecificityScore(InterpMetrics):
+    def __init__(
+        self,
+        num_classes,
+        part_num,
+        proto_per_class,
+        img_sz=224,
+        half_size=36,
+        min_part_fraction=0.0,
+        dist_sync_on_step=False,
+        uncropped=True,
+    ):
+        super().__init__(
+            num_classes=num_classes,
+            part_num=part_num,
+            proto_per_class=proto_per_class,
+            img_sz=img_sz,
+            half_size=half_size,
+            dist_sync_on_step=dist_sync_on_step,
+            uncropped=uncropped,
+        )
+
+        self.min_part_fraction = min_part_fraction
+
+        self.add_state("all_proto_acts", default=[], dist_reduce_fx="cat")
+        self.add_state("all_targets", default=[], dist_reduce_fx="cat")
+        self.add_state("all_sample_parts_centroids", default=[], dist_reduce_fx="cat")
+        self.add_state("all_sample_bounding_box", default=[], dist_reduce_fx="cat")
+
+    def update(self, proto_acts, targets, sample_parts_centroids, sample_bounding_box):
+        batch_proto_acts, batch_targets = self.filter_proto_acts(proto_acts, targets)
+
+        self.all_proto_acts.append(batch_proto_acts)
+        self.all_targets.append(batch_targets)
+        self.all_sample_parts_centroids.extend(sample_parts_centroids)
+        self.all_sample_bounding_box.append(sample_bounding_box)
+
+    def compute(self):
+        all_proto_to_part, all_proto_part_mask = self.proto2part_and_masks(
+            self.all_proto_acts,
+            self.all_targets,
+            self.all_sample_parts_centroids,
+            self.all_sample_bounding_box,
+        )
+
+        all_proto_specificity = []
+
+        for proto_idx in range(len(all_proto_to_part)):
+            proto_to_part = all_proto_to_part[proto_idx]
+            proto_part_mask = all_proto_part_mask[proto_idx]
+
+            assert ((1.0 - proto_part_mask) * proto_to_part).sum() == 0
+
+            proto_to_part_sum = proto_to_part.sum(axis=0)
+            proto_part_mask_sum = proto_part_mask.sum(axis=0)
+
+            proto_part_mask_sum = torch.where(
+                proto_part_mask_sum == 0,
+                proto_part_mask_sum + 1,
+                proto_part_mask_sum,
+            )
+
+            part_fraction = proto_to_part_sum / proto_part_mask_sum
+
+            used_parts = (part_fraction > self.min_part_fraction).float()
+
+            specificity_score = used_parts.sum()
+
+            all_proto_specificity.append(specificity_score)
+
+        all_proto_specificity = torch.stack(all_proto_specificity).float()
+        specificity_score = all_proto_specificity.mean()
+        
+        return specificity_score

@@ -17,6 +17,7 @@ from protopnet.metrics import (
     PrototypeAblationUniqueCount,
     add_gaussian_noise,
     PartQualityScore,
+    PartSpecificityScore
 )
 from protopnet.models.vanilla_protopnet import VanillaProtoPNet
 from protopnet.preprocess import mean, std
@@ -115,10 +116,20 @@ def test_interp_metrics(loaded_ppnet, seed):
         uncropped=True,
     )
 
+    psps = PartSpecificityScore(
+        num_classes=num_classes,
+        proto_per_class=loaded_ppnet.prototype_layer.num_prototypes_per_class,
+        half_size=36,
+        part_num=cub_meta_labels.get_part_num(),
+        min_part_fraction=0.0,
+        uncropped=True,
+    )
+
+
     intersperse_rsts_pcs = []
     intersperse_rsts_pss = []
     intersperse_rsts_pss_stable = []
-
+    intersperse_rsts_psps = []
     generator = torch.Generator()
     generator.manual_seed(seed)
     with torch.no_grad():
@@ -146,6 +157,7 @@ def test_interp_metrics(loaded_ppnet, seed):
             pas.update(proto_acts, logits, class_connection_weights)
             pau.update(proto_acts, logits, class_connection_weights)
             pqs.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
+            psps.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
             pss.update(
                 proto_acts,
                 proto_acts_noisy,
@@ -164,12 +176,14 @@ def test_interp_metrics(loaded_ppnet, seed):
             intersperse_rsts_pcs.append(pcs.compute())
             intersperse_rsts_pss.append(pss.compute())
             intersperse_rsts_pss_stable.append(pss_stable.compute())
+            intersperse_rsts_psps.append(psps.compute())
 
     pss_score = pss.compute()
     pcs_score = pcs.compute()
     pas_score = pas.compute()
     pau_score = pau.compute()
     pqs_score = pqs.compute()
+    psps_score = psps.compute()
     pss_stable_score = pss_stable.compute()
 
     assert pcs_score == 0.0, "pcs_score test failed"
@@ -177,6 +191,7 @@ def test_interp_metrics(loaded_ppnet, seed):
     assert pas_score >= 0.0 and pas_score <= 1.0, "pas_score test failed"
     assert pau_score >= 0, "pau_score test failed"
     assert pqs_score >= 0.0 and pqs_score <= 1.0, "pqs_score test failed"
+    assert psps_score >= 0.0 and psps_score <= 1.0, "psps_score test failed"
 
     assert intersperse_rsts_pcs[-1] == 0.0, "intersperse_rsts_pcs test failed"
     assert (
