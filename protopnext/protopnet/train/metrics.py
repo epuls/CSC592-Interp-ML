@@ -11,7 +11,7 @@ from torchmetrics.classification import (
     MulticlassROC,
 )
 
-from ..metrics import PartConsistencyScore, PartStabilityScore, PartQualityScore, add_gaussian_noise
+from ..metrics import PartConsistencyScore, PartStabilityScore, add_gaussian_noise, PartSpecificityScore #Import new metric
 from ..prototypical_part_model import ProtoPNet
 from ..utilities.trainer_utilities import predicated_extend
 
@@ -167,9 +167,10 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                             half_size=half_size,
                         ),
                     ),
+                    #Initialize new metric
                     TrainingMetric(
-                        name="prototype_quality",
-                        metric=PartQualityScore(
+                        name="prototype_specificity",
+                        metric=PartSpecificityScore(
                             num_classes=num_classes,
                             part_num=part_num,
                             proto_per_class=proto_per_class,
@@ -269,7 +270,8 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                 forward_args=forward_args,
                 forward_outputs=forward_outputs,
             )
-            self.update_prototype_quality(
+            # Update new metric
+            self.update_specificity(
                 forward_args=forward_args,
                 forward_outputs=forward_outputs,
             )
@@ -354,13 +356,14 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             sample_bounding_box=forward_args["sample_bounding_box"],
         )
 
-    def update_prototype_quality(self, forward_args: dict, forward_outputs: dict):
+    # New metric
+    def update_specificity(self, forward_args: dict, forward_outputs: dict):
         """
-        Update the prototype quality metric.
+        Update the specificity metric.
         """
-        quality = self.metrics["prototype_quality"].metric
-
-        quality.update(
+        specificity = self.metrics["prototype_specificity"].metric
+    
+        specificity.update(
             proto_acts=forward_outputs["prototype_activations"],
             targets=forward_args["target"],
             sample_parts_centroids=forward_args["sample_parts_centroids"],

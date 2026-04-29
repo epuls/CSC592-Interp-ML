@@ -43,7 +43,7 @@ class TestInterpretableTrainingMetrics:
             "conf_mat",
             "prototype_stability",
             "prototype_consistency",
-            "prototype_quality",
+            "prototype_specificity", # new metric
             "prototype_sparsity",
             "n_unique_proto_parts",
             "n_unique_protos",
@@ -85,7 +85,7 @@ class TestInterpretableTrainingMetrics:
             "n_unique_protos",
             "n_unique_proto_parts",
             "prototype_consistency",
-            "prototype_quality",
+            "prototype_specificity", # new metric
             "prototype_stability",
             "prototype_score",
             "acc_proto_score",
@@ -139,7 +139,6 @@ class TestInterpretableTrainingMetrics:
         assert (
             result["acc_proto_score"] == result["accuracy"] * result["prototype_score"]
         )
-        # TODO: Decide if we want asserts for 592 metrics
 
         # conf_mat memory is shared between compute_dict() calls
         result["conf_mat"] = result["conf_mat"].clone()

@@ -14,7 +14,7 @@ from protopnet.metrics import (
     PartConsistencyScore,
     PartStabilityScore,
     add_gaussian_noise,
-    PartQualityScore,
+    PartSpecificityScore # import new metric
 )
 from protopnet.models.vanilla_protopnet import VanillaProtoPNet
 from protopnet.preprocess import mean, std
@@ -103,15 +103,18 @@ def test_interp_metrics(loaded_ppnet, seed):
         uncropped=True,
     )
 
-    pqs = PartQualityScore(
+    # nnew metric
+    psps = PartSpecificityScore(
         num_classes=num_classes,
         proto_per_class=loaded_ppnet.prototype_layer.num_prototypes_per_class,
         half_size=36,
         part_num=cub_meta_labels.get_part_num(),
+        min_part_fraction=0.0,
         uncropped=True,
-)
+    )
 
     intersperse_rsts_pcs = []
+    intersperse_rsts_psps = [] #new metric
     intersperse_rsts_pss = []
     intersperse_rsts_pss_stable = []
 
@@ -134,8 +137,13 @@ def test_interp_metrics(loaded_ppnet, seed):
             )["prototype_activations"]
 
             pcs.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
-            pqs.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
-
+            # new metric
+            psps.update(
+                proto_acts,
+                targets,
+                sample_parts_centroids,
+                sample_bounding_box,
+            )
             pss.update(
                 proto_acts,
                 proto_acts_noisy,
@@ -152,12 +160,13 @@ def test_interp_metrics(loaded_ppnet, seed):
             )
 
             intersperse_rsts_pcs.append(pcs.compute())
+            intersperse_rsts_psps.append(psps.compute()) # new metric
             intersperse_rsts_pss.append(pss.compute())
             intersperse_rsts_pss_stable.append(pss_stable.compute())
 
     pss_score = pss.compute()
     pcs_score = pcs.compute()
-    pqs_score = pqs.compute()
+    psps_score = psps.compute() # new metric
     pss_stable_score = pss_stable.compute()
 
     assert pcs_score == 0.0, "pcs_score test failed"

@@ -1,6 +1,7 @@
 runner: slurm
+partition: gpu
 cpus_per_task: 8
-gres: gpu:a5000:1
+gres: gpu:2080ti:1
 time: 1-08:00:00
 mem_gb: 32
-array_size: 5
+array_size: 1

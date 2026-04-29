@@ -359,8 +359,8 @@ class PartStabilityScore(InterpMetrics):
 
         return stability_score
 
-# How many prototypes contain a cub point of interest (object part) in the corresponding region, and how many prototypes do not correspond to any object part in the part annotations (non-consistent prototypes).
-class PartQualityScore(InterpMetrics):
+# testing new metric
+class PartSpecificityScore(InterpMetrics):
     def __init__(
         self,
         num_classes,
@@ -368,6 +368,7 @@ class PartQualityScore(InterpMetrics):
         proto_per_class,
         img_sz=224,
         half_size=36,
+        min_part_fraction=0.0,
         dist_sync_on_step=False,
         uncropped=True,
     ):
@@ -380,6 +381,9 @@ class PartQualityScore(InterpMetrics):
             dist_sync_on_step=dist_sync_on_step,
             uncropped=uncropped,
         )
+
+        self.min_part_fraction = min_part_fraction
+
         self.add_state("all_proto_acts", default=[], dist_reduce_fx="cat")
         self.add_state("all_targets", default=[], dist_reduce_fx="cat")
         self.add_state("all_sample_parts_centroids", default=[], dist_reduce_fx="cat")
@@ -387,6 +391,7 @@ class PartQualityScore(InterpMetrics):
 
     def update(self, proto_acts, targets, sample_parts_centroids, sample_bounding_box):
         batch_proto_acts, batch_targets = self.filter_proto_acts(proto_acts, targets)
+
         self.all_proto_acts.append(batch_proto_acts)
         self.all_targets.append(batch_targets)
         self.all_sample_parts_centroids.extend(sample_parts_centroids)
@@ -399,20 +404,33 @@ class PartQualityScore(InterpMetrics):
             self.all_sample_parts_centroids,
             self.all_sample_bounding_box,
         )
-        all_proto_quality = []
+
+        all_proto_specificity = []
 
         for proto_idx in range(len(all_proto_to_part)):
             proto_to_part = all_proto_to_part[proto_idx]
-
             proto_part_mask = all_proto_part_mask[proto_idx]
-            assert (
-                (1.0 - proto_part_mask) * proto_to_part
-            ).sum() == 0
 
-            has_any_annotated_point = proto_to_part.sum() > 0
-            all_proto_quality.append(has_any_annotated_point.float())
+            assert ((1.0 - proto_part_mask) * proto_to_part).sum() == 0
 
-        all_proto_quality = torch.stack(all_proto_quality).float()
-        quality_score = all_proto_quality.mean()
+            proto_to_part_sum = proto_to_part.sum(axis=0)
+            proto_part_mask_sum = proto_part_mask.sum(axis=0)
 
-        return quality_score
+            proto_part_mask_sum = torch.where(
+                proto_part_mask_sum == 0,
+                proto_part_mask_sum + 1,
+                proto_part_mask_sum,
+            )
+
+            part_fraction = proto_to_part_sum / proto_part_mask_sum
+
+            used_parts = (part_fraction > self.min_part_fraction).float()
+
+            specificity_score = used_parts.sum()
+
+            all_proto_specificity.append(specificity_score)
+
+        all_proto_specificity = torch.stack(all_proto_specificity).float()
+        specificity_score = all_proto_specificity.mean()
+        
+        return specificity_score
