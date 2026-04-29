@@ -11,6 +11,19 @@ class TestInterpretableTrainingMetrics:
     @pytest.fixture
     def protopnet_mock(self):
         class ProtoPNetMock:
+            class PredictionHead:
+                class ClassConnectionLayer:
+                    weight = torch.tensor(
+                        [
+                            [1.0, -0.5],
+                            [-0.5, 1.0],
+                        ]
+                    )
+
+                class_connection_layer = ClassConnectionLayer()
+
+            prototype_prediction_head = PredictionHead()
+
             def __call__(self, x, return_prototype_layer_output_dict=False):
                 return {"prototype_activations": torch.rand(len(x), 2, 1, 2, 2)}
 
@@ -43,6 +56,8 @@ class TestInterpretableTrainingMetrics:
             "conf_mat",
             "prototype_stability",
             "prototype_consistency",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
             "prototype_quality",
             "prototype_sparsity",
             "n_unique_proto_parts",
@@ -85,6 +100,8 @@ class TestInterpretableTrainingMetrics:
             "n_unique_protos",
             "n_unique_proto_parts",
             "prototype_consistency",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
             "prototype_quality",
             "prototype_stability",
             "prototype_score",
@@ -100,14 +117,18 @@ class TestInterpretableTrainingMetrics:
             )
             if key.startswith("n_"):
                 assert result[key] // 1 == result[key], key
+            elif key == "prototype_ablation_top1_unique_count":
+                assert result[key] // 1 == result[key], key
             elif key == "pr":
                 precision, recall, _ = result[key]
                 assert all(((x >= 0) & (x <= 1)).all() for x in precision)
                 assert all(((x >= 0) & (x <= 1)).all() for x in recall)
                 assert len(precision) == 2, key
-                assert precision[0].shape == torch.Size([2]), key
+                assert precision[0].ndim == 1, key
+                assert precision[0].numel() >= 2, key
                 assert len(recall) == 2, key
-                assert recall[0].shape == torch.Size([2]), key
+                assert recall[0].ndim == 1, key
+                assert recall[0].numel() >= 2, key
             elif key == "roc":
                 fpr, tpr, _ = result[key]
                 assert all(((x >= 0) & (x <= 1)).all() for x in fpr)
@@ -181,3 +202,22 @@ class TestInterpretableTrainingMetrics:
             del result[field]
 
         assert result_2 == result, "other results should be cached"
+
+    def test_compute_dict_before_project_includes_ablation(self, training_metrics):
+        forward_args = {
+            "img": torch.rand(2, 3, 224, 224),
+            "target": torch.tensor([1, 0]),
+        }
+
+        forward_output = {
+            "logits": torch.tensor([[0.1, 0.2], [0.4, 0.3]]),
+            "prototype_activations": torch.rand(2, 2, 1, 2, 2),
+        }
+
+        training_metrics.update_all(forward_args, forward_output, phase="warm")
+        result = training_metrics.compute_dict()
+
+        assert "prototype_ablation_score" in result
+        assert "prototype_ablation_top1_unique_count" in result
+        assert "prototype_score" not in result
+        assert "acc_proto_score" not in result

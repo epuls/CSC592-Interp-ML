@@ -11,7 +11,14 @@ from torchmetrics.classification import (
     MulticlassROC,
 )
 
-from ..metrics import PartConsistencyScore, PartStabilityScore, PartQualityScore, add_gaussian_noise
+from ..metrics import (
+    PartConsistencyScore,
+    PartQualityScore,
+    PartStabilityScore,
+    PrototypeAblationScore,
+    PrototypeAblationUniqueCount,
+    add_gaussian_noise,
+)
 from ..prototypical_part_model import ProtoPNet
 from ..utilities.trainer_utilities import predicated_extend
 
@@ -100,6 +107,9 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             device (Union[str, torch.device], optional): The device to run the metrics on. Defaults to "cpu".
         """
 
+        prediction_head = protopnet.prototype_prediction_head
+        activation_top_k = getattr(prediction_head, "k_for_topk", 1)
+
         super().__init__(
             metrics=predicated_extend(
                 not acc_only,
@@ -168,6 +178,18 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                         ),
                     ),
                     TrainingMetric(
+                        name="prototype_ablation_score",
+                        metric=PrototypeAblationScore(
+                            activation_top_k=activation_top_k
+                        ),
+                    ),
+                    TrainingMetric(
+                        name="prototype_ablation_top1_unique_count",
+                        metric=PrototypeAblationUniqueCount(
+                            activation_top_k=activation_top_k
+                        ),
+                    ),
+                    TrainingMetric(
                         name="prototype_quality",
                         metric=PartQualityScore(
                             num_classes=num_classes,
@@ -203,6 +225,43 @@ class InterpretableTrainingMetrics(TrainingMetrics):
         # FIXME - this is hack
         self.acc_only = acc_only
 
+    def _reset_epoch_metrics(self):
+        for metric_name in [
+            "accuracy",
+            "pr",
+            "roc",
+            "weighted_auroc",
+            "class_aurocs",
+            "conf_mat",
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
+        ]:
+            self.metrics[metric_name].metric.reset()
+
+    def _compute_epoch_metrics(self) -> dict:
+        result = {
+            "accuracy": self.metrics["accuracy"].metric.compute(),
+            "pr": self.metrics["pr"].metric.compute(),
+            "roc": self.metrics["roc"].metric.compute(),
+            "weighted_auroc": self.metrics["weighted_auroc"].metric.compute(),
+            "class_aurocs": self.metrics["class_aurocs"].metric.compute(),
+            "conf_mat": self.metrics["conf_mat"].metric.compute(),
+        }
+
+        if not self.acc_only:
+            result.update(
+                {
+                    "prototype_ablation_score": self.metrics[
+                        "prototype_ablation_score"
+                    ].metric.compute(),
+                    "prototype_ablation_top1_unique_count": self.metrics[
+                        "prototype_ablation_top1_unique_count"
+                    ].metric.compute(),
+                }
+            )
+
+        return result
+
     def metric_names(self):
         raw_metric_names = super().metric_names()
         if self.acc_only:
@@ -219,12 +278,7 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             self.reset()
             self.prototype_metrics_cached = False
         else:
-            self.metrics["accuracy"].metric.reset()
-            self.metrics["pr"].metric.reset()
-            self.metrics["roc"].metric.reset()
-            self.metrics["weighted_auroc"].metric.reset()
-            self.metrics["class_aurocs"].metric.reset()
-            self.metrics["conf_mat"].metric.reset()
+            self._reset_epoch_metrics()
 
         if self.protopnet.prototypes_embedded():
             self.prototypes_embedded_any = True
@@ -259,6 +313,9 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             forward_args=forward_args,
             forward_outputs=forward_outputs,
         )
+
+        if not self.acc_only:
+            self.update_prototype_ablation(forward_outputs=forward_outputs)
 
         if not self.acc_only and "sample_bounding_box" in forward_args:
             self.update_stability(
@@ -354,6 +411,27 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             sample_bounding_box=forward_args["sample_bounding_box"],
         )
 
+    def update_prototype_ablation(self, forward_outputs: dict):
+        prediction_head = self.protopnet.prototype_prediction_head
+        if not hasattr(prediction_head, "class_connection_layer"):
+            return
+
+        if "prototype_activations" not in forward_outputs:
+            return
+
+        class_connection_weights = (
+            prediction_head.class_connection_layer.weight.detach()
+        )
+        for metric_name in [
+            "prototype_ablation_score",
+            "prototype_ablation_top1_unique_count",
+        ]:
+            self.metrics[metric_name].metric.update(
+                proto_acts=forward_outputs["prototype_activations"].detach(),
+                logits=forward_outputs["logits"].detach(),
+                class_connection_weights=class_connection_weights,
+            )
+
     def update_prototype_quality(self, forward_args: dict, forward_outputs: dict):
         """
         Update the prototype quality metric.
@@ -388,26 +466,12 @@ class InterpretableTrainingMetrics(TrainingMetrics):
         Compute all the metrics and return the raw values in a dictionary.
         """
         if self.acc_only or not self.prototypes_embedded_any:
-            return {
-                "accuracy": self.metrics["accuracy"].metric.compute(),
-                "pr": self.metrics["pr"].metric.compute(),
-                "roc": self.metrics["roc"].metric.compute(),
-                "weighted_auroc": self.metrics["weighted_auroc"].metric.compute(),
-                "class_aurocs": self.metrics["class_aurocs"].metric.compute(),
-                "conf_mat": self.metrics["conf_mat"].metric.compute(),
-            }
+            return self._compute_epoch_metrics()
 
         if self.prototype_metrics_cached:
             log.debug("returning cached metrics")
             result_dict = self.cached_results
-            result_dict["accuracy"] = self.metrics["accuracy"].metric.compute()
-            result_dict["pr"] = self.metrics["pr"].metric.compute()
-            result_dict["roc"] = self.metrics["roc"].metric.compute()
-            result_dict["weighted_auroc"] = self.metrics[
-                "weighted_auroc"
-            ].metric.compute()
-            result_dict["class_aurocs"] = self.metrics["class_aurocs"].metric.compute()
-            result_dict["conf_mat"] = self.metrics["conf_mat"].metric.compute()
+            result_dict.update(self._compute_epoch_metrics())
 
         else:
             log.debug("calculating new metrics")
