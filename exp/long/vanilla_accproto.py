@@ -82,6 +82,8 @@ def train(
             "acc_proto_score",
             "prototype_ablation_score",
             "prototype_ablation_top1_unique_count",
+            "prototype_quality",
+            "prototype_specificity",
         ],
     )
 
