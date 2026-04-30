@@ -18,6 +18,7 @@ from ..metrics import (
     PrototypeAblationScore,
     PrototypeAblationUniqueCount,
     PartSpecificityScore,
+    PrototypeSelectivityScore,
     add_gaussian_noise,
 )
 from ..prototypical_part_model import ProtoPNet
@@ -209,6 +210,15 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                         ),
                     ),
                     TrainingMetric(
+                        name="prototype_selectivity",
+                        metric=PrototypeSelectivityScore(
+                            num_classes=num_classes,
+                            part_num=part_num,
+                            proto_per_class=proto_per_class,
+                            img_sz=img_size,
+                        ),
+                    ),
+                    TrainingMetric(
                         name="prototype_sparsity",
                         metric=torchmetrics.MeanMetric(),
                     ),
@@ -343,6 +353,10 @@ class InterpretableTrainingMetrics(TrainingMetrics):
                 forward_args=forward_args,
                 forward_outputs=forward_outputs,
             )
+            self.update_selectivity(
+                forward_args=forward_args,
+                forward_outputs=forward_outputs,
+            )
             self.update_prototype_sparsity()
 
     def update_accuracy(self, forward_args: dict, forward_outputs: dict):
@@ -469,6 +483,17 @@ class InterpretableTrainingMetrics(TrainingMetrics):
             targets=forward_args["target"],
             sample_parts_centroids=forward_args["sample_parts_centroids"],
             sample_bounding_box=forward_args["sample_bounding_box"],
+        )
+    
+    def update_selectivity(self, forward_args: dict, forward_outputs: dict):
+        """
+        Update the selectivity metric.
+        """
+        selectivity = self.metrics["prototype_selectivity"].metric
+
+        selectivity.update(
+            proto_acts=forward_outputs["prototype_activations"],
+            targets=forward_args["target"],
         )
 
     def update_prototype_sparsity(self):

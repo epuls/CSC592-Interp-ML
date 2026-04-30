@@ -60,6 +60,7 @@ class TestInterpretableTrainingMetrics:
             "prototype_ablation_top1_unique_count",
             "prototype_quality",
             "prototype_sparsity",
+            "prototype_selectivity",
             "n_unique_proto_parts",
             "n_unique_protos",
         ]:
@@ -104,6 +105,7 @@ class TestInterpretableTrainingMetrics:
             "prototype_ablation_top1_unique_count",
             "prototype_quality",
             "prototype_stability",
+            "prototype_selectivity",
             "prototype_score",
             "acc_proto_score",
         }

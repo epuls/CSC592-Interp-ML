@@ -1,4 +1,5 @@
 # ====== MODEL AND DATA LOADING ======
+import math 
 import torch
 import torch.utils.data
 import torchvision.transforms as transforms
@@ -38,6 +39,35 @@ def add_gaussian_noise(norm_img, generator, std=0.2, eps=0.25):
     perturbed_img = norm_img + noise
     return perturbed_img
 
+def _entropy_selectivity(scores: torch.Tensor) -> float:
+    """
+    Selectivity = 1 - H(p) / log(N), in [0, 1].
+ 
+    Returns 1.0 when all activation mass is on a single image (perfectly
+    selective) and 0.0 when activation is uniform across all images.
+ 
+    Edge cases:
+      - empty input → 0.0
+      - all zeros → 0.0 (prototype never activated; not informative)
+      - N=1 → 0.0 (single image; metric is undefined, return 0)
+    """
+    if scores.numel() == 0:
+        return 0.0
+    s = scores.clamp(min=0.0).flatten()
+    total = s.sum()
+    if total <= 0:
+        return 0.0
+    n = s.numel()
+    if n <= 1:
+        return 0.0
+    p = s / total
+    # Sum entropy only over nonzero probabilities to avoid log(0).
+    nz = p[p > 0]
+    entropy = -(nz * nz.log()).sum().item()
+    max_entropy = math.log(n)
+    return 1.0 - entropy / max_entropy if max_entropy > 0 else 0.0
+
+ 
 def prototype_ablation_drops(
     proto_acts,
     logits,
@@ -635,3 +665,65 @@ class PartSpecificityScore(InterpMetrics):
         specificity_score = all_proto_specificity.mean()
         
         return specificity_score
+
+class PrototypeSelectivityScore(InterpMetrics):
+    """
+    Dataset-level prototype selectivity via normalized Shannon entropy.
+ 
+    Args:
+        num_classes: dataset num_classes.
+        part_num: kept but not used.
+        proto_per_class: prototypes per class.
+        img_sz: input image size (default 224).
+        dist_sync_on_step: torchmetrics param.
+        uncropped: matches base class semantics; not used here.
+    """
+ 
+    def __init__(
+        self,
+        num_classes,
+        part_num,
+        proto_per_class,
+        img_sz=224,
+        dist_sync_on_step=False,
+        uncropped=True,
+    ):
+        super().__init__(
+            num_classes=num_classes,
+            part_num=part_num,
+            proto_per_class=proto_per_class,
+            img_sz=img_sz,
+            half_size=16,  # unused
+            dist_sync_on_step=dist_sync_on_step,
+            uncropped=uncropped,
+        )
+        # Selectivity is dataset-wide, so we accumulate max-pooled scores
+        # per (image, prototype) across the project loader.
+        self.add_state("all_max_acts", default=[], dist_reduce_fx="cat")
+ 
+    def update(self, proto_acts, targets, sample_parts_centroids=None,
+                sample_bounding_box=None):
+        """
+        Args:
+            proto_acts: (B, total_prototypes, latent_h, latent_w).
+            targets: unused.
+            sample_parts_centroids: ignored (API compat).
+            sample_bounding_box: ignored (API compat).
+        """
+        # Max-pool here — full latent grids aren't needed for selectivity.
+        max_pooled = proto_acts.amax(dim=(-2, -1)).detach().cpu()
+        self.all_max_acts.append(max_pooled)
+ 
+    def compute(self):
+        all_max_acts = torch.cat(self.all_max_acts, dim=0)
+        # Shape: (N_images, total_prototypes)
+        n_images, total_prototypes = all_max_acts.shape
+ 
+        per_proto_selectivity = []
+        for proto_idx in range(total_prototypes):
+            scores = all_max_acts[:, proto_idx]
+            per_proto_selectivity.append(_entropy_selectivity(scores))
+ 
+        selectivity_score = torch.tensor(per_proto_selectivity, dtype=torch.float32)
+        return selectivity_score.mean()
+ 

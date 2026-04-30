@@ -17,7 +17,8 @@ from protopnet.metrics import (
     PrototypeAblationUniqueCount,
     add_gaussian_noise,
     PartQualityScore,
-    PartSpecificityScore
+    PartSpecificityScore,
+    PrototypeSelectivityScore,
 )
 from protopnet.models.vanilla_protopnet import VanillaProtoPNet
 from protopnet.preprocess import mean, std
@@ -125,11 +126,19 @@ def test_interp_metrics(loaded_ppnet, seed):
         uncropped=True,
     )
 
+    ps = PrototypeSelectivityScore(
+        num_classes=num_classes,
+        part_num=cub_meta_labels.get_part_num(),
+        proto_per_class=loaded_ppnet.prototype_layer.num_prototypes_per_class,
+        uncropped=True,
+    )
+
 
     intersperse_rsts_pcs = []
     intersperse_rsts_pss = []
     intersperse_rsts_pss_stable = []
     intersperse_rsts_psps = []
+    intersperse_rsts_ps = []
     generator = torch.Generator()
     generator.manual_seed(seed)
     with torch.no_grad():
@@ -158,6 +167,7 @@ def test_interp_metrics(loaded_ppnet, seed):
             pau.update(proto_acts, logits, class_connection_weights)
             pqs.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
             psps.update(proto_acts, targets, sample_parts_centroids, sample_bounding_box)
+            ps.update(proto_acts, targets)
             pss.update(
                 proto_acts,
                 proto_acts_noisy,
@@ -177,6 +187,7 @@ def test_interp_metrics(loaded_ppnet, seed):
             intersperse_rsts_pss.append(pss.compute())
             intersperse_rsts_pss_stable.append(pss_stable.compute())
             intersperse_rsts_psps.append(psps.compute())
+            intersperse_rsts_ps.append(ps.compute())
 
     pss_score = pss.compute()
     pcs_score = pcs.compute()
@@ -185,6 +196,7 @@ def test_interp_metrics(loaded_ppnet, seed):
     pqs_score = pqs.compute()
     psps_score = psps.compute()
     pss_stable_score = pss_stable.compute()
+    ps_score = ps.compute()
 
     assert pcs_score == 0.0, "pcs_score test failed"
     assert pss_stable_score == 1.0, "pss_stable_score test failed"
@@ -192,6 +204,7 @@ def test_interp_metrics(loaded_ppnet, seed):
     assert pau_score >= 0, "pau_score test failed"
     assert pqs_score >= 0.0 and pqs_score <= 1.0, "pqs_score test failed"
     assert psps_score >= 0.0 and psps_score <= 1.0, "psps_score test failed"
+    assert 0.0 <= ps_score <= 1.0,  "ps_score test failed"
 
     assert intersperse_rsts_pcs[-1] == 0.0, "intersperse_rsts_pcs test failed"
     assert (
@@ -478,3 +491,137 @@ def test_prototype_ablation_unique_count():
     )
 
     assert metric.compute() == 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PrototypeSelectivityScore tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "batch_size, num_classes, proto_per_class",
+    [
+        pytest.param(50, 10, 5),
+        pytest.param(20, 4, 3),
+        pytest.param(100, 2, 10),
+    ],
+)
+def test_selectivity_uniform_is_zero(batch_size, num_classes, proto_per_class):
+    """
+    A prototype that fires equally on every image should have selectivity 0.
+    """
+    sel = PrototypeSelectivityScore(
+        num_classes=num_classes,
+        part_num=1,
+        proto_per_class=proto_per_class,
+    )
+
+    # Same activation map, identical scores → fires equally on every image
+    all_proto_acts = torch.ones(
+        batch_size, num_classes * proto_per_class, 7, 7
+    )
+    all_targets = torch.zeros(batch_size, dtype=torch.long)
+
+    sel.update(all_proto_acts, all_targets)
+    score = sel.compute()
+
+    assert abs(score.item()) < 1e-4, (
+        f"uniform activation should give selectivity 0, got {score.item()}"
+    )
+
+
+@pytest.mark.parametrize(
+    "batch_size, num_classes, proto_per_class",
+    [
+        pytest.param(20, 4, 3),
+        pytest.param(50, 10, 5),
+    ],
+)
+def test_selectivity_one_hot_is_one(batch_size, num_classes, proto_per_class):
+    """
+    A prototype with all activation mass on a single image should have
+    selectivity = 1.
+    """
+    sel = PrototypeSelectivityScore(
+        num_classes=num_classes,
+        part_num=1,
+        proto_per_class=proto_per_class,
+    )
+
+    n_protos = num_classes * proto_per_class
+    # Every prototype fires only on image 0 (peak = 5.0 there, 0 elsewhere)
+    all_proto_acts = torch.zeros(batch_size, n_protos, 7, 7)
+    all_proto_acts[0, :, 3, 3] = 5.0  # only image 0 has any activation
+    all_targets = torch.zeros(batch_size, dtype=torch.long)
+
+    sel.update(all_proto_acts, all_targets)
+    score = sel.compute()
+
+    assert abs(score.item() - 1.0) < 1e-4, (
+        f"one-hot activation should give selectivity 1, got {score.item()}"
+    )
+
+
+def test_selectivity_partial_concentration():
+    """
+    A prototype that fires equally on 10% of images should give selectivity
+    1 - log(0.1*N) / log(N), which is a known closed-form value.
+    """
+    batch_size = 100
+    num_classes = 4
+    proto_per_class = 2
+
+    sel = PrototypeSelectivityScore(
+        num_classes=num_classes,
+        part_num=1,
+        proto_per_class=proto_per_class,
+    )
+
+    n_protos = num_classes * proto_per_class
+    all_proto_acts = torch.zeros(batch_size, n_protos, 7, 7)
+    # Each prototype fires equally on the first 10 images, zero elsewhere.
+    all_proto_acts[:10, :, 3, 3] = 1.0
+    all_targets = torch.zeros(batch_size, dtype=torch.long)
+
+    sel.update(all_proto_acts, all_targets)
+    score = sel.compute()
+
+    # Expected: 1 - log(10) / log(100) = 0.5
+    expected = 1 - math.log(10) / math.log(100)
+    assert abs(score.item() - expected) < 1e-4, (
+        f"expected {expected:.4f}, got {score.item()}"
+    )
+
+
+def test_selectivity_accumulates_across_batches():
+    """
+    Calling update() twice with the same data should give the same result
+    as concatenating and updating once — the metric must accumulate
+    correctly across batches.
+    """
+    batch_size = 30
+    num_classes = 4
+    proto_per_class = 2
+    n_protos = num_classes * proto_per_class
+
+    # Build a non-trivial activation pattern
+    torch.manual_seed(0)
+    all_proto_acts = torch.rand(batch_size, n_protos, 7, 7)
+    all_targets = torch.zeros(batch_size, dtype=torch.long)
+
+    # Single-update reference
+    sel_ref = PrototypeSelectivityScore(
+        num_classes=num_classes, part_num=1, proto_per_class=proto_per_class,
+    )
+    sel_ref.update(all_proto_acts, all_targets)
+    ref = sel_ref.compute()
+
+    # Two-update version with same total data — split in half
+    sel_split = PrototypeSelectivityScore(
+        num_classes=num_classes, part_num=1, proto_per_class=proto_per_class,
+    )
+    sel_split.update(all_proto_acts[:15], all_targets[:15])
+    sel_split.update(all_proto_acts[15:], all_targets[15:])
+    split = sel_split.compute()
+
+    assert abs(ref.item() - split.item()) < 1e-5, (
+        f"batched updates differ: {ref.item()} vs {split.item()}"
+    )
